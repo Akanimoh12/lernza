@@ -2403,6 +2403,47 @@ fn test_get_active_participant_count_nonexistent_quest() {
     assert_eq!(r, Err(Ok(Error::NotFound)));
 }
 
+#[test]
+fn test_category_management_functions() {
+    let (env, client, owner, token) = setup();
+    let admin = Address::generate(&env);
+    client.initialize(&admin);
+
+    let cat_rust = String::from_str(&env, "Rust");
+    let cat_stellar = String::from_str(&env, "Stellar");
+    let cat_duplicate = String::from_str(&env, "RustLang");
+
+    // Create quests with various categories
+    let _q1 = client.create_quest(
+        &owner,
+        &String::from_str(&env, "Quest 1"),
+        &String::from_str(&env, "Desc 1"),
+        &cat_rust,
+        &Vec::new(&env),
+        &token,
+        &Visibility::Public,
+        &None,
+        &None,
+    );
+
+    let _q2 = client.create_quest(
+        &owner,
+        &String::from_str(&env, "Quest 2"),
+        &String::from_str(&env, "Desc 2"),
+        &cat_stellar,
+        &Vec::new(&env),
+        &token,
+        &Visibility::Public,
+        &None,
+        &None,
+    );
+
+    let q3 = client.create_quest(
+        &owner,
+        &String::from_str(&env, "Quest 3"),
+        &String::from_str(&env, "Desc 3"),
+        &cat_duplicate,
+        &Vec::new(&env),
 // ── Ownership transfer tests (#1471) ────────────────────────────────────────
 
 #[test]
@@ -2837,6 +2878,36 @@ fn test_create_quest_with_valid_metadata_uri() {
         &Visibility::Public,
         &None,
         &None,
+    );
+
+    // 1. List categories with pagination
+    let categories = client.list_categories(&0, &10);
+    assert_eq!(categories.len(), 3);
+    assert!(categories.contains(&cat_rust));
+    assert!(categories.contains(&cat_stellar));
+    assert!(categories.contains(&cat_duplicate));
+
+    // 2. Category quest counts
+    assert_eq!(client.category_quest_count(&cat_rust), 1);
+    assert_eq!(client.category_quest_count(&cat_stellar), 1);
+    assert_eq!(client.category_quest_count(&cat_duplicate), 1);
+
+    // 3. Admin merges duplicate category "RustLang" into "Rust"
+    let merged_count = client.merge_categories(&cat_duplicate, &cat_rust);
+    assert_eq!(merged_count, 1);
+
+    // Verify consolidated category
+    assert_eq!(client.category_quest_count(&cat_rust), 2);
+    assert_eq!(client.category_quest_count(&cat_duplicate), 0);
+
+    let q3_info = client.get_quest(&q3);
+    assert_eq!(q3_info.category, cat_rust);
+
+    // 4. Clean up empty categories
+    let cleaned = client.cleanup_empty_categories();
+    assert_eq!(cleaned, 0); // merge_categories already updated master index
+}
+
         &Some(uri.clone()),
     );
     let quest = client.get_quest(&quest_id);
