@@ -251,6 +251,32 @@ function useWalletState(): WalletContextValue {
         loading: true,
         error: null,
       }))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      const normalized = msg.toLowerCase()
+
+      if (
+        normalized.includes("reject") ||
+        normalized.includes("cancel") ||
+        normalized.includes("denied")
+      ) {
+        // Distinguish a user declining the connection from a network/timeout
+        // failure. Previously both resulted in a silent (null) error, leaving
+        // the user unable to tell whether to retry, switch wallets, or check
+        // their network.
+        setState(s => ({
+          ...s,
+          loading: false,
+          connected: false,
+          address: null,
+          error: {
+            code: "user_rejected",
+            message:
+              "You rejected the wallet connection request. Reconnect and approve the request to continue, or switch wallets if you changed your mind.",
+          },
+        }))
+        return
+      }
 
       try {
         if (targetId === "freighter") {

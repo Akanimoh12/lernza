@@ -15,6 +15,17 @@ export function formatTokens(amount: number | bigint, decimals = 7, symbol = "TO
   return formatTokenAmount(amount, { decimals, symbol, compact: true })
 }
 
+/**
+ * Formats an amount already denominated in whole USDC tokens.
+ *
+ * `formatTokens` scales raw amounts by token decimals, so it renders a 100 USDC
+ * reward as "0 USDC" — the create-quest form and CSV imports collect whole
+ * tokens, not base units.
+ */
+export function formatUsdc(amount: number): string {
+  return amount.toLocaleString(undefined, { maximumFractionDigits: 2 })
+}
+
 export function getSecondsRemaining(deadline: number, nowMs = Date.now()): number {
   const nowSeconds = Math.floor(nowMs / 1000) // Convert once to whole seconds
   return Math.max(0, deadline - nowSeconds)

@@ -1403,6 +1403,7 @@ impl RewardsContract {
         if !list.contains(&token) {
             list.push_back(token);
         }
+        env.storage().instance().set(&DataKey::SupportedTokens, &list);
         env.storage()
             .instance()
             .set(&DataKey::SupportedTokens, &list);
@@ -1436,6 +1437,7 @@ impl RewardsContract {
                 }
             }
         }
+        env.storage().instance().set(&DataKey::SupportedTokens, &list);
         env.storage()
             .instance()
             .set(&DataKey::SupportedTokens, &list);
@@ -1461,6 +1463,7 @@ impl RewardsContract {
             .unwrap_or(Vec::new(&env))
     }
 
+    /// Return aggregated platform statistics — Issue #717.
     /// Return aggregated platform statistics — Issue #717, validated in #1274.
     ///
     /// Enables a single-call dashboard query instead of N per-contract calls.

@@ -1,3 +1,4 @@
+import React, { useState, useEffect, useCallback, Suspense } from "react"
 import React, { useState, useDeferredValue, useEffect, useCallback, Suspense } from "react"
 import {
   Plus,
@@ -63,6 +64,8 @@ interface DashboardProps {
   onLaunchTutorial?: () => void
 }
 
+export function Dashboard({ onSelectQuest, onCreateQuest, onLaunchTutorial }: DashboardProps = {} as DashboardProps) {
+  const { connected, connect, shortAddress, address, loading: walletConnecting, error } = useWallet()
 export function Dashboard(
   { onSelectQuest, onCreateQuest, onLaunchTutorial }: DashboardProps = {} as DashboardProps
 ) {
@@ -90,6 +93,7 @@ export function Dashboard(
   const [tagFilterMode, setTagFilterMode] = useState<"AND" | "OR">("OR")
   const [tagInput, setTagInput] = useState("")
   const [displayCount, setDisplayCount] = useState(DASHBOARD_QUEST_PAGE_SIZE)
+  const [nowSeconds] = useState(() => Math.floor(Date.now() / 1000))
   // Live clock: deadline filters and derived lifecycle status must reflect the
   // real time, not the value sampled on first render — a tab left open in the
   // background used to keep showing quests as "ending soon" long after their
@@ -127,6 +131,7 @@ export function Dashboard(
       active = false
     }
   }, [category])
+  
 
   const onboarding = useOnboarding()
 
@@ -280,6 +285,11 @@ export function Dashboard(
   const loadedPublicQuests = [...publicQuests, ...extraPublicQuests]
 
   const filteredQuests =
+    filter === "owned"
+      ? ownedQuests
+      : filter === "enrolled"
+        ? enrolledQuests
+        : loadedPublicQuests
     filter === "owned" ? ownedQuests : filter === "enrolled" ? enrolledQuests : loadedPublicQuests
 
   const presetFilteredQuests = (() => {
@@ -543,6 +553,33 @@ export function Dashboard(
                     </span>
                   </div>
                 )}
+              </Button>
+
+              {error && (
+                <div
+                  role="alert"
+                  className="border-border bg-destructive/10 mb-6 border px-4 py-3 text-left text-sm font-semibold text-destructive"
+                >
+                  {error.message}
+                </div>
+              )}
+
+              {/* Mini feature list */}
+              <div className="border-border animate-fade-in-up stagger-4 mt-8 border-t pt-6">
+                <div className="flex flex-wrap justify-center gap-4">
+                  {[
+                    { icon: Target, text: "Track quests" },
+                    { icon: Coins, text: "Earn tokens" },
+                    { icon: Sparkles, text: "On-chain" },
+                  ].map(item => (
+                    <div key={item.text} className="flex items-center gap-2">
+                      <div className="bg-secondary border-border flex h-6 w-6 items-center justify-center border-[1.5px]">
+                        <item.icon className="h-3 w-3" />
+                      </div>
+                      <span className="text-muted-foreground text-xs font-bold">{item.text}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </CardContent>
@@ -898,6 +935,8 @@ export function Dashboard(
                   }`}
                 >
                   {categoryInfo.expiresAt * 1000 - Date.now() < 7 * 24 * 60 * 60 * 1000
+                    ? "Expiring soon — "
+                    : "Available until "}
                     ? t("dashboard.expiringSoon")
                     : t("dashboard.availableUntil")}
                   {new Date(categoryInfo.expiresAt * 1000).toLocaleDateString()}
@@ -1013,6 +1052,142 @@ export function Dashboard(
 
               {(isLoading || questStatsLoading) && <SkeletonQuestList className="mb-5" count={3} />}
 
+              <div className="relative grid grid-cols-1 gap-4 sm:gap-5 md:grid-cols-2 lg:grid-cols-1">
+                {visibleQuests.map((ws, i) => {
+                  const stats = questStats[ws.id] || {
+                    enrolleeCount: 0,
+                    milestoneCount: 0,
+                    poolBalance: 0,
+                  }
+                  const totalMilestones = stats.milestoneCount
+                  const completedCount = questCompletions[ws.id] || 0
+                  const totalReward = stats.poolBalance
+                  const earnedReward =
+                    totalMilestones > 0 ? (totalReward * completedCount) / totalMilestones : 0
+                  const isOwned = !!address && ws.owner === address
+
+                  return (
+                    <button
+                      key={ws.id}
+                      type="button"
+                      onClick={() => goToQuest(ws.id)}
+                      aria-label={`Open quest ${ws.name}`}
+                      data-onboarding={i === 0 ? "quest-card" : undefined}
+                      className={`card-tilt group animate-fade-in-up cursor-pointer stagger-${i + 1} focus-visible:ring-ring w-full text-left focus-visible:ring-2 focus-visible:outline-none`}
+                    >
+                      <Card>
+                        <CardHeader className="pb-3">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="mb-1 flex items-center gap-3">
+                                <CardTitle className="group-hover:text-accent text-base transition-colors">
+                                  {ws.name}
+                                </CardTitle>
+                                {completedCount === totalMilestones && totalMilestones > 0 && (
+                                  <Badge variant="success" className="gap-1">
+                                    <Sparkles className="h-3 w-3" />
+                                    Complete
+                                  </Badge>
+                                )}
+                                <Badge
+                                  variant={isOwned ? "default" : "secondary"}
+                                  className="text-[10px]"
+                                >
+                                  {isOwned ? "Owner" : "Enrolled"}
+                                </Badge>
+                              </div>
+                              <p className="text-muted-foreground mt-1 line-clamp-1 text-sm">
+                                {ws.description}
+                              </p>
+                            </div>
+                            <div className="bg-secondary border-border group-hover:bg-accent ml-3 flex h-8 w-8 flex-shrink-0 items-center justify-center border transition-all group-hover:shadow-sm">
+                              <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                            </div>
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          <div className="mb-4 flex flex-wrap items-center gap-3 text-sm">
+                            <Badge variant="secondary" className="gap-1">
+                              <Users className="h-3 w-3" />
+                              {ws.maxEnrollees ? (
+                                <>
+                                  {stats.enrolleeCount}/{ws.maxEnrollees} enrolled (
+                                  {Math.max(0, ws.maxEnrollees - stats.enrolleeCount)} left)
+                                </>
+                              ) : (
+                                <>{stats.enrolleeCount} enrolled</>
+                              )}
+                            </Badge>
+                            <Badge variant="secondary" className="gap-1">
+                              <Target className="h-3 w-3" />
+                              {stats.milestoneCount} milestones
+                            </Badge>
+                            <Badge variant="default" className="gap-1">
+                              <Coins className="h-3 w-3" />
+                              {formatTokens(stats.poolBalance)} USDC
+                            </Badge>
+                            {ws.category && (
+                              <Badge variant="outline" className="text-[10px]">
+                                {ws.category}
+                              </Badge>
+                            )}
+                          </div>
+
+                          {totalMilestones > 0 && (
+                            <div className="space-y-2">
+                              <div className="flex items-center gap-3">
+                                <Progress
+                                  value={completedCount}
+                                  max={totalMilestones}
+                                  className="flex-1"
+                                />
+                                <span className="text-muted-foreground text-xs font-bold whitespace-nowrap">
+                                  {completedCount}/{totalMilestones}
+                                </span>
+                              </div>
+                              {earnedReward > 0 && (
+                                <div className="flex items-center justify-between">
+                                  <span className="text-muted-foreground text-xs font-bold">
+                                    Earned so far
+                                  </span>
+                                  <span className="text-xs font-semibold text-green-700">
+                                    +{formatTokens(earnedReward)} / {formatTokens(totalReward)} USDC
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    </button>
+                  )
+                })}
+              </div>
+
+              {(hasMorePublic || sortedQuests.length > visibleQuests.length) &&
+                !isLoading &&
+                !loadError && (
+                  <div className="mt-5 text-center">
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setDisplayCount(prev => prev + DASHBOARD_LOAD_MORE_SIZE)
+                        if (hasMorePublic) void loadMorePublic()
+                      }}
+                      className="shimmer-on-hover"
+                      disabled={loadingMore}
+                    >
+                      {loadingMore ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Loading…
+                        </>
+                      ) : (
+                        `Load more (${visibleQuests.length} of ${sortedQuests.length})`
+                      )}
+                    </Button>
+                  </div>
+                )}
               {visibleQuests.length > DASHBOARD_VIRTUALIZE_THRESHOLD ? (
                 <VirtualList
                   items={visibleQuests}

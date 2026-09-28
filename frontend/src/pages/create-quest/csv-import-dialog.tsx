@@ -1,10 +1,17 @@
-import { useState, type ChangeEvent, type DragEvent } from "react"
+import { useRef, useState, type ChangeEvent, type DragEvent } from "react"
 import { Upload, FileSpreadsheet, Download, AlertTriangle, CheckCircle2, X } from "lucide-react"
 import { useTranslation } from "@/i18n"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import { formatTokens, cn } from "@/lib/utils"
-import { parseCsvMilestones, generateCsvTemplate, type CsvParseResult, type ParsedMilestone } from "./csv-parser"
+import { useScrollLock } from "@/hooks/use-scroll-lock"
+import { useFocusTrap } from "@/hooks/use-focus-trap"
+import { formatUsdc, cn } from "@/lib/utils"
+import {
+  parseCsvMilestones,
+  downloadCsvTemplate,
+  type CsvParseResult,
+  type ParsedMilestone,
+} from "./csv-parser"
 
 interface CsvImportDialogProps {
   isOpen: boolean
@@ -19,11 +26,52 @@ export function CsvImportDialog({ isOpen, onClose, onImport }: CsvImportDialogPr
   const [importMode, setImportMode] = useState<"append" | "replace">("append")
   const [isDragging, setIsDragging] = useState(false)
 
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useScrollLock(isOpen)
+
+  // Trap focus, autofocus the file picker, close on Escape, restore focus.
+  useFocusTrap(dialogRef, {
+    isActive: isOpen,
+    onEscape: onClose,
+    initialFocusRef: fileInputRef,
+  })
+
   if (!isOpen) return null
 
-const handleFileSelect = (selectedFile: File) => {
-  const MAX_FILE_SIZE = 2 * 1024 * 1024 // 2 MB
+  const handleFileSelect = (selectedFile: File) => {
+    const MAX_FILE_SIZE = 2 * 1024 * 1024 // 2 MB
 
+    if (selectedFile.size > MAX_FILE_SIZE) {
+      setFile(null)
+      setParseResult({
+        milestones: [],
+        errors: [
+          {
+            row: 0,
+            field: "file",
+            message: "File size must be 2 MB or smaller.",
+          },
+        ],
+      })
+      return
+    }
+
+    if (!selectedFile.name.endsWith(".csv")) {
+      setFile(null)
+      setParseResult({
+        milestones: [],
+        errors: [
+          {
+            row: 0,
+            field: "file",
+            message: "Only .csv files are supported.",
+          },
+        ],
+      })
+      return
+    }
   if (selectedFile.size > MAX_FILE_SIZE) {
     setFile(null)
     setParseResult({
@@ -54,17 +102,17 @@ const handleFileSelect = (selectedFile: File) => {
     return
   }
 
-  setFile(selectedFile)
+    setFile(selectedFile)
 
-  const reader = new FileReader()
-  reader.onload = e => {
-    const text = e.target?.result as string
-    const result = parseCsvMilestones(text || "")
-    setParseResult(result)
+    const reader = new FileReader()
+    reader.onload = e => {
+      const text = e.target?.result as string
+      const result = parseCsvMilestones(text || "")
+      setParseResult(result)
+    }
+
+    reader.readAsText(selectedFile)
   }
-
-  reader.readAsText(selectedFile)
-}
 
   const handleInputChange = (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -91,16 +139,7 @@ const handleFileSelect = (selectedFile: File) => {
   }
 
   const handleDownloadTemplate = () => {
-    const templateText = generateCsvTemplate()
-    const blob = new Blob([templateText], { type: "text/csv" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = "milestones_template.csv"
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+    downloadCsvTemplate()
   }
 
   const handleConfirm = () => {
@@ -110,16 +149,27 @@ const handleFileSelect = (selectedFile: File) => {
     }
   }
 
-  const totalReward =
-    parseResult?.milestones.reduce((sum, m) => sum + m.rewardAmount, 0) || 0
+  const totalReward = parseResult?.milestones.reduce((sum, m) => sum + m.rewardAmount, 0) || 0
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs">
-      <div className="border-border bg-background w-full max-w-xl border shadow-2xl animate-scale-in">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="csv-import-title"
+        tabIndex={-1}
+        className="border-border bg-background animate-scale-in w-full max-w-xl border shadow-2xl"
+      >
         {/* Header */}
         <div className="bg-accent border-border flex items-center justify-between border-b px-6 py-3">
           <div className="flex items-center gap-2">
             <FileSpreadsheet className="h-4 w-4" />
+            <span
+              id="csv-import-title"
+              className="text-sm font-semibold tracking-wider uppercase"
+            >
+              Import Milestones from CSV
             <span className="text-sm font-semibold tracking-wider uppercase">
               {t("csv.title")}
             </span>
@@ -133,7 +183,7 @@ const handleFileSelect = (selectedFile: File) => {
           </button>
         </div>
 
-        <div className="p-6 space-y-5 max-h-[75vh] overflow-y-auto">
+        <div className="max-h-[75vh] space-y-5 overflow-y-auto p-6">
           {/* Dropzone */}
           <div
             onDragOver={handleDragOver}
@@ -144,6 +194,25 @@ const handleFileSelect = (selectedFile: File) => {
               isDragging && "border-accent bg-accent/20"
             )}
           >
+            <Upload className="text-muted-foreground mx-auto mb-2 h-8 w-8" />
+            <p className="mb-1 text-sm font-semibold">Drag and drop your milestone CSV file here</p>
+            <p className="text-muted-foreground mb-4 text-xs">
+              Columns required: <code>milestone_title</code>, <code>description</code>,{" "}
+              <code>reward_amount</code>
+            </p>
+            <div className="flex items-center justify-center gap-3">
+              <label
+                className={cn(
+                  "border-border bg-background hover:bg-secondary cursor-pointer border px-4 py-2 text-xs font-semibold tracking-wider uppercase shadow-sm transition-colors",
+                  "has-[:focus-visible]:ring-ring has-[:focus-visible]:ring-2"
+                )}
+              >
+                Browse Files
+                {/*
+                  Visually hidden rather than `display: none` so it stays focusable —
+                  `hidden` would make the file picker unreachable by keyboard and
+                  silently defeat the dialog's initial focus target.
+                */}
             <Upload className="mx-auto h-8 w-8 text-muted-foreground mb-2" />
             <p className="text-sm font-semibold mb-1">{t("csv.dropzone")}</p>
             <p className="text-xs text-muted-foreground mb-4">
@@ -154,16 +223,17 @@ const handleFileSelect = (selectedFile: File) => {
               <label className="border-border bg-background hover:bg-secondary cursor-pointer border px-4 py-2 text-xs font-semibold uppercase tracking-wider transition-colors shadow-sm">
                 {t("csv.browse")}
                 <input
+                  ref={fileInputRef}
                   type="file"
                   accept=".csv"
                   onChange={handleInputChange}
-                  className="hidden"
+                  className="sr-only"
                 />
               </label>
               <button
                 type="button"
                 onClick={handleDownloadTemplate}
-                className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 text-xs font-bold transition-colors cursor-pointer"
+                className="text-muted-foreground hover:text-foreground flex cursor-pointer items-center gap-1.5 text-xs font-bold transition-colors"
               >
                 <Download className="h-3.5 w-3.5" />
                 {t("csv.template")}
@@ -173,10 +243,10 @@ const handleFileSelect = (selectedFile: File) => {
 
           {/* Selected File & Parse Summary */}
           {file && (
-            <div className="flex items-center justify-between border border-border p-3 bg-secondary">
+            <div className="border-border bg-secondary flex items-center justify-between border p-3">
               <div className="flex items-center gap-2">
-                <FileSpreadsheet className="h-4 w-4 text-muted-foreground" />
-                <span className="text-xs font-semibold truncate max-w-[240px]">{file.name}</span>
+                <FileSpreadsheet className="text-muted-foreground h-4 w-4" />
+                <span className="max-w-[240px] truncate text-xs font-semibold">{file.name}</span>
               </div>
               {parseResult && (
                 <div className="flex items-center gap-2">
@@ -195,12 +265,16 @@ const handleFileSelect = (selectedFile: File) => {
 
           {/* Errors List */}
           {parseResult && parseResult.errors.length > 0 && (
-            <div className="border border-destructive/40 bg-destructive/10 p-4 space-y-2">
-              <div className="flex items-center gap-2 text-destructive text-xs font-semibold">
+            <div
+              className="border-destructive/40 bg-destructive/10 space-y-2 border p-4"
+              role="alert"
+              aria-live="assertive"
+            >
+              <div className="text-destructive flex items-center gap-2 text-xs font-semibold">
                 <AlertTriangle className="h-4 w-4 flex-shrink-0" />
                 {t("csv.errorsHeading", { count: parseResult.errors.length })}
               </div>
-              <ul className="text-xs space-y-1 list-disc list-inside text-destructive font-medium max-h-32 overflow-y-auto">
+              <ul className="text-destructive max-h-32 list-inside list-disc space-y-1 overflow-y-auto text-xs font-medium">
                 {parseResult.errors.map((err, idx) => (
                   <li key={idx}>
                     {t("csv.rowError", { row: err.row, field: err.field, message: err.message })}
@@ -214,6 +288,11 @@ const handleFileSelect = (selectedFile: File) => {
           {parseResult && parseResult.milestones.length > 0 && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
+                <span className="text-muted-foreground text-xs font-semibold tracking-wider uppercase">
+                  Valid Milestones Preview ({parseResult.milestones.length})
+                </span>
+                <span className="text-xs font-semibold">
+                  Total Reward: {formatUsdc(totalReward)} USDC
                 <span className="text-xs font-semibold tracking-wider uppercase text-muted-foreground">
                   {t("csv.previewHeading", { count: parseResult.milestones.length })}
                 </span>
@@ -222,15 +301,15 @@ const handleFileSelect = (selectedFile: File) => {
                 </span>
               </div>
 
-              <div className="border border-border divide-y divide-border max-h-48 overflow-y-auto bg-background">
+              <div className="border-border divide-border bg-background max-h-48 divide-y overflow-y-auto border">
                 {parseResult.milestones.map((m, idx) => (
-                  <div key={idx} className="p-3 flex items-start justify-between gap-3 text-xs">
+                  <div key={idx} className="flex items-start justify-between gap-3 p-3 text-xs">
                     <div>
                       <p className="font-semibold">{m.title}</p>
-                      <p className="text-muted-foreground truncate max-w-sm">{m.description}</p>
+                      <p className="text-muted-foreground max-w-sm truncate">{m.description}</p>
                     </div>
-                    <Badge variant="secondary" className="tabular-nums flex-shrink-0">
-                      {m.rewardAmount} USDC
+                    <Badge variant="secondary" className="flex-shrink-0 tabular-nums">
+                      {formatUsdc(m.rewardAmount)} USDC
                     </Badge>
                   </div>
                 ))}
@@ -238,7 +317,7 @@ const handleFileSelect = (selectedFile: File) => {
 
               {/* Import Mode Radio Options */}
               <div className="flex items-center gap-6 pt-2">
-                <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold">
                   <input
                     type="radio"
                     name="importMode"
@@ -249,7 +328,7 @@ const handleFileSelect = (selectedFile: File) => {
                   />
                   {t("csv.modeAppend")}
                 </label>
-                <label className="flex items-center gap-2 text-xs font-semibold cursor-pointer">
+                <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold">
                   <input
                     type="radio"
                     name="importMode"
